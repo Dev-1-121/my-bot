@@ -1,0 +1,4 @@
+    discord.py
+    Flask
+    gunicorn # Recommended for production Flask deployments
+    
