@@ -30,25 +30,14 @@ PREFIXES_FILE = 'prefixes.json'
 WARNINGS_FILE = 'warnings.json'
 MOD_LOG_CHANNELS_FILE = 'mod_log_channels.json'
 AFK_FILE = 'afk_status.json' # New file for AFK status
+AUTOMOD_SETTINGS_FILE = 'automod_settings.json' # New file for AutoMod settings
 
 # --- In-memory Dictionaries (will be loaded from/saved to files) ---
 guild_prefixes = {}
 user_warnings = {}
 mod_log_channels = {}
 afk_status = {} # New dictionary for AFK status
-
-# --- AutoMod Settings (In-memory for now, can be made persistent later) ---
-# These settings are in-memory and will reset if the bot restarts.
-# For persistence, you would save/load this dictionary to a JSON file similar to other settings.
-automod_settings = {
-    "anti_invite_enabled": True,
-    "anti_link_enabled": False, # Default to False, can be enabled by admin
-    "anti_profanity_enabled": True,
-    "profanity_words": ["badword1", "badword2", "damn", "shit", "fuck", "bitch", "asshole", "cunt", "nigger", "faggot", "retard", "kys", "nigga"], # Example words
-    "automod_ignored_channels": [], # List of channel IDs to ignore automod in
-    "automod_ignored_roles": [] # List of role IDs to ignore automod for
-}
-
+automod_settings = {} # Will be loaded from file
 
 # --- Bot Activities for Status ---
 # Changed to dnd status and watching "SERVERS !!!"
@@ -153,6 +142,43 @@ def save_afk_status():
         # Convert integer keys (user IDs) to strings for JSON serialization
         json.dump({str(k): v for k, v in afk_status.items()}, f, indent=4)
         print(f"Saved AFK status: {afk_status}")
+
+def load_automod_settings():
+    """Loads AutoMod settings from a JSON file."""
+    global automod_settings
+    if os.path.exists(AUTOMOD_SETTINGS_FILE):
+        with open(AUTOMOD_SETTINGS_FILE, 'r') as f:
+            try:
+                automod_settings = json.load(f)
+                print(f"Loaded AutoMod settings: {automod_settings}")
+            except json.JSONDecodeError:
+                print(f"Error decoding {AUTOMOD_SETTINGS_FILE}. Starting with default AutoMod settings.")
+                # Default settings if file is corrupt or empty
+                automod_settings = {
+                    "anti_invite_enabled": True,
+                    "anti_link_enabled": False,
+                    "anti_profanity_enabled": True,
+                    "profanity_words": ["badword1", "badword2", "damn", "shit", "fuck", "bitch", "asshole", "cunt", "nigger", "faggot", "retard", "kys", "nigga"],
+                    "automod_ignored_channels": [],
+                    "automod_ignored_roles": []
+                }
+    else:
+        print(f"{AUTOMOD_SETTINGS_FILE} not found. Starting with default AutoMod settings.")
+        # Default settings if file doesn't exist
+        automod_settings = {
+            "anti_invite_enabled": True,
+            "anti_link_enabled": False,
+            "anti_profanity_enabled": True,
+            "profanity_words": ["badword1", "badword2", "damn", "shit", "fuck", "bitch", "asshole", "cunt", "nigger", "faggot", "retard", "kys", "nigga"],
+            "automod_ignored_channels": [],
+            "automod_ignored_roles": []
+        }
+
+def save_automod_settings():
+    """Saves AutoMod settings to a JSON file."""
+    with open(AUTOMOD_SETTINGS_FILE, 'w') as f:
+        json.dump(automod_settings, f, indent=4)
+        print(f"Saved AutoMod settings: {automod_settings}")
 
 # --- Helper to send DMs ---
 async def _send_dm_to_member(member: discord.Member, message: str):
@@ -364,7 +390,7 @@ def _contains_profanity(message_content: str):
 async def on_ready():
     """
     Called when the bot is ready and connected to Discord.
-    Loads persistent data (prefixes, warnings, mod log channels, AFK status).
+    Loads persistent data (prefixes, warnings, mod log channels, AFK status, AutoMod settings).
     Starts the background task for changing bot status.
     """
     print(f'Logged in as {bot.user.name} ({bot.user.id})')
@@ -373,6 +399,7 @@ async def on_ready():
     load_warnings()
     load_mod_log_channels()
     load_afk_status() # Load AFK status on startup
+    load_automod_settings() # Load AutoMod settings on startup
     change_status.start() # Start the background task
     print('Bot is ready!')
 
@@ -431,7 +458,7 @@ async def on_command_error(ctx, error):
     else:
         # Catch any other unexpected errors
         print(f"An unexpected error occurred in command '{ctx.command.name}': {error}")
-        await ctx.send(f"An unexpected error occurred while processing your command: `{error}`. Please try again or contact an administrator if the issue persists.")
+        await ctx.send(f"An unexpected error occurred while processing your command: `{e}`. Please try again or contact an administrator if the issue persists.")
 
 @bot.event
 async def on_message(message):
@@ -444,6 +471,11 @@ async def on_message(message):
 
     # Check if automod should ignore this channel or user's roles
     if message.guild: # AutoMod only applies in guilds
+        # Exclude administrators from AutoMod checks
+        if message.author.guild_permissions.administrator:
+            await bot.process_commands(message)
+            return
+
         if message.channel.id in automod_settings["automod_ignored_channels"]:
             await bot.process_commands(message) # Still process commands in ignored channels
             return
@@ -679,10 +711,10 @@ COMMAND_CATEGORIES = {
         "move_member", "kick_from_vc", "ban_vc", "unban_vc", "mass_move_vc"
     ],
     "Fun": [
-        "8ball", "coinflip", "dice", "fact", "joke", "tictactoe", "meme" # Added "meme" here
+        "8ball", "coinflip", "dice", "fact", "joke", "tictactoe", "meme", "kill", "slap" # Added "kill" and "slap" here
     ],
     "AutoMod": [
-        "automod"
+        "automod", "add_bad_word", "remove_bad_word", "list_bad_words" # Added new AutoMod commands
     ]
 }
 
@@ -1131,7 +1163,7 @@ async def softban(ctx, member: discord.Member, days: int = 0, *, reason: str = "
         print(f"DEBUG: Bot missing permissions to softban {member.name} in guild {ctx.guild.name}.")
     except discord.HTTPException as e:
         await ctx.send(f"An error occurred with Discord's API while trying to softban {member.mention}: `{e}`")
-        print(f"DEBUG: HTTPException during softban for {member.name}: {e}")
+        print(f"DEBUG: HTTPException during softban: {e}")
     except Exception as e:
         await ctx.send(f"An unexpected error occurred while trying to softban: `{e}`")
         print(f"DEBUG: Error in {ctx.prefix}softban command for {member.name}: {e}")
@@ -1280,7 +1312,7 @@ async def timeout(ctx, member: discord.Member, duration_str: str, *, reason: str
         await log_moderation_action(ctx.guild, "Timeout", member, ctx.author, f"Duration: {duration_str}, Reason: {reason}")
         await _send_dm_to_member(member, f'You have been timed out in {ctx.guild.name} for {duration_str} for: {reason}')
     except discord.Forbidden:
-        await ctx.send(f"I don't have permission to time out {member.mention}. Please ensure my role is higher than theirs and I have the 'Moderate Members' permission.")
+        await ctx.send(f"I don't have permission to timeout {member.mention}. Please ensure my role is higher than theirs and I have the 'Moderate Members' permission.")
         print(f"DEBUG: Bot missing permissions to timeout {member.name} in guild {ctx.guild.name}.")
     except discord.HTTPException as e:
         await ctx.send(f"An error occurred with Discord's API while trying to time out {member.mention}: `{e}`")
@@ -2257,7 +2289,7 @@ async def mass_move_vc(ctx, source_vc: discord.VoiceChannel, destination_vc: dis
             await member.move_to(destination_vc, reason=f"Mass moved by {ctx.author.name}")
             moved_count += 1
         except discord.Forbidden:
-            failed_moves.append(f"{member.mention} (Bot missing permissions)")
+            failed_members.append(f"{member.mention} (Bot missing permissions)")
             print(f"DEBUG: Bot missing permissions to move {member.name} to {destination_vc.name}.")
         except discord.HTTPException as e:
             failed_moves.append(f"{member.mention} (Discord API error: {e})")
@@ -2582,7 +2614,6 @@ async def eightball(ctx, *, question: str):
         "Yes.",
         "Signs point to yes.",
         "Reply hazy, try again.",
-        "Ask again later.",
         "Better not tell you now.",
         "Cannot predict now.",
         "Concentrate and ask again.",
@@ -2727,6 +2758,97 @@ async def meme(ctx):
         await ctx.send(f"An unexpected error occurred while trying to fetch a meme: `{e}`")
         print(f"DEBUG: Error in {ctx.prefix}meme command: {e}")
 
+# List of example GIF URLs for the 'kill' command
+# You can replace these with actual GIF URLs or integrate with a GIF API
+kill_gifs = [
+    "https://i.giphy.com/12zQQNVooHEIGQ.webp", # Updated GIF 1
+    "https://media.giphy.com/media/3o7TKoHnJ2Q6yD2yA/giphy.gif", # Placeholder GIF 2
+    "https://media.giphy.com/media/3o7TKoHnJ2Q6yD2yA/giphy.gif", # Placeholder GIF 3
+    "https://media.giphy.com/media/3o7TKoHnJ2Q6yD2yA/giphy.gif" # Placeholder GIF 4
+]
+
+@bot.command(name='kill', help='''"Kills" a mentioned user with a random, humorous death message and a GIF. Usage: {prefix}kill <member>''')
+@commands.cooldown(1, 5, commands.BucketType.channel)
+async def kill(ctx, member: discord.Member):
+    """
+    "Kills" a mentioned user with a random, humorous death message and a GIF.
+    """
+    if member == ctx.author:
+        await ctx.send(f"{ctx.author.mention} tries to kill themselves, but misses spectacularly and just trips over their own feet.")
+        return
+    if member == bot.user:
+        await ctx.send(f"You try to kill me, but I'm just a bot! I'm already dead inside. 🤖")
+        return
+
+    death_messages = [
+        f"{ctx.author.mention} unleashed a flock of angry geese on {member.mention}, who was last seen running towards the horizon, honking loudly.",
+        f"{ctx.author.mention} challenged {member.mention} to a staring contest. {member.mention} blinked first, and then spontaneously combusted from the sheer disappointment.",
+        f"{ctx.author.mention} hit {member.mention} with a rubber chicken. It was surprisingly effective.",
+        f"{ctx.author.mention} convinced {member.mention} that gravity was optional. It was not.",
+        f"{ctx.author.mention} fed {member.mention} a sandwich made entirely of spicy memes. {member.mention}'s brain overheated.",
+        f"{ctx.author.mention} used the forbidden tickle jutsu on {member.mention}, who laughed themselves into oblivion.",
+        f"{ctx.author.mention} whispered a terrible pun into {member.mention}'s ear. The sheer cringe was fatal.",
+        f"{ctx.author.mention} accidentally dropped a piano on {member.mention}. Oops.",
+        f"{ctx.author.mention} turned {member.mention} into a marketable plushie. Their cuteness was overwhelming.",
+        f"{ctx.author.mention} taught {member.mention} how to code in assembly. {member.mention}'s head exploded from the complexity."
+    ]
+
+    embed = discord.Embed(
+        title="💀 Fatal Encounter!",
+        description=random.choice(death_messages),
+        color=discord.Color.dark_grey(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    # Add a random GIF to the embed
+    embed.set_image(url=random.choice(kill_gifs))
+    embed.set_footer(text="F in the chat for the fallen.")
+    await ctx.send(embed=embed)
+
+# List of example GIF URLs for the 'slap' command
+# You can replace these with actual GIF URLs or integrate with a GIF API
+slap_gifs = [
+    "https://c.tenor.com/wDu33wHVM_wAAAAd/tenor.gif", # Updated GIF 1
+    "https://media.giphy.com/media/xT0BKlXf6qHw6a/giphy.gif", # Placeholder GIF 2
+    "https://media.giphy.com/media/xT0BKlXf6qHw6a/giphy.gif", # Placeholder GIF 3
+    "https://media.giphy.com/media/xT0BKlXf6qHw6a/giphy.gif" # Placeholder GIF 4
+]
+
+@bot.command(name='slap', help='''Slaps a mentioned user with a random, humorous slap message and a GIF. Usage: {prefix}slap <member>''')
+@commands.cooldown(1, 5, commands.BucketType.channel)
+async def slap(ctx, member: discord.Member):
+    """
+    Slaps a mentioned user with a random, humorous slap message and a GIF.
+    """
+    if member == ctx.author:
+        await ctx.send(f"{ctx.author.mention} attempts to slap themselves, but ends up just lightly patting their own cheek. A for effort?")
+        return
+    if member == bot.user:
+        await ctx.send(f"You try to slap me, but I'm intangible! Your hand phases right through. 👻")
+        return
+
+    slap_messages = [
+        f"{ctx.author.mention} slaps {member.mention} with a large, wet fish. The smell lingers.",
+        f"{ctx.author.mention} delivers a gentle, yet firm, slap to {member.mention} with a velvet glove.",
+        f"{ctx.author.mention} slaps {member.mention} with the force of a thousand suns... or maybe just a slightly firm handshake.",
+        f"{ctx.author.mention} winds up and slaps {member.mention} with a freshly baked pie. Delicious!",
+        f"{ctx.author.mention} gives {member.mention} a disciplinary slap with a newspaper rolled into a tube. 'Bad human!'",
+        f"{ctx.author.mention} slaps {member.mention} so hard, they briefly question their life choices.",
+        f"{ctx.author.mention} slaps {member.mention} with a single, solitary high-five. It was awkward.",
+        f"{ctx.author.mention} slaps {member.mention} with a stack of unread terms and conditions.",
+        f"{ctx.author.mention} slaps {member.mention} with the truth, and it stings.",
+        f"{ctx.author.mention} slaps {member.mention} with a wet noodle. It makes a surprisingly loud *thwack*."
+    ]
+
+    embed = discord.Embed(
+        title="👋 Slap!",
+        description=random.choice(slap_messages),
+        color=discord.Color.orange(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    # Add a random GIF to the embed
+    embed.set_image(url=random.choice(slap_gifs))
+    embed.set_footer(text="That's gonna leave a mark... or not.")
+    await ctx.send(embed=embed)
 
 # --- Tic-Tac-Toe Game ---
 
@@ -3004,6 +3126,7 @@ async def automod_enable(ctx, feature: str):
         await log_moderation_action(ctx.guild, "AutoMod Config", bot.user, ctx.author, "Anti-profanity enabled")
     else:
         await ctx.send("Invalid AutoMod feature. Choose from: `anti_invite`, `anti_link`, `anti_profanity`.")
+    save_automod_settings() # Save changes
 
 @automod.command(name='disable', help='Disables an AutoMod feature. Usage: {prefix}automod disable <feature_name>')
 @commands.has_permissions(administrator=True)
@@ -3024,6 +3147,7 @@ async def automod_disable(ctx, feature: str):
         await log_moderation_action(ctx.guild, "AutoMod Config", bot.user, ctx.author, "Anti-profanity disabled")
     else:
         await ctx.send("Invalid AutoMod feature. Choose from: `anti_invite`, `anti_link`, `anti_profanity`.")
+    save_automod_settings() # Save changes
 
 @automod.group(name='ignore', invoke_without_command=True, help='Manages ignored channels/roles for AutoMod. Use `{prefix}automod ignore help` for subcommands.')
 @commands.has_permissions(administrator=True)
@@ -3052,6 +3176,7 @@ async def automod_ignore_channel(ctx, action: str, channel: discord.TextChannel)
             await ctx.send(f"Channel {channel.mention} is not in the AutoMod ignore list.")
     else:
         await ctx.send("Invalid action. Use 'add' or 'remove'.")
+    save_automod_settings() # Save changes
 
 @automod_ignore.command(name='role', help='Adds or removes a role from AutoMod ignore list. Usage: {prefix}automod ignore role <add|remove> <role_name>')
 @commands.has_permissions(administrator=True)
@@ -3074,6 +3199,66 @@ async def automod_ignore_role(ctx, action: str, *, role: discord.Role):
             await ctx.send(f"Role {role.mention} is not in the AutoMod ignore list.")
     else:
         await ctx.send("Invalid action. Use 'add' or 'remove'.")
+    save_automod_settings() # Save changes
+
+@bot.command(name='add_bad_word', help='Adds a word to the profanity filter. Usage: {prefix}add_bad_word <word>')
+@commands.has_permissions(administrator=True)
+@commands.cooldown(1, 3, commands.BucketType.guild)
+async def add_bad_word(ctx, *, word: str):
+    """
+    Adds a word to the AutoMod profanity filter.
+    Requires 'Administrator' permission.
+    """
+    word = word.lower()
+    if word in automod_settings["profanity_words"]:
+        await ctx.send(f"'{word}' is already in the profanity filter.")
+        return
+
+    automod_settings["profanity_words"].append(word)
+    save_automod_settings()
+    await ctx.send(f"Added '{word}' to the profanity filter.")
+    await log_moderation_action(ctx.guild, "AutoMod Profanity", "Profanity List", ctx.author, f"Added word: '{word}'")
+
+@bot.command(name='remove_bad_word', help='Removes a word from the profanity filter. Usage: {prefix}remove_bad_word <word>')
+@commands.has_permissions(administrator=True)
+@commands.cooldown(1, 3, commands.BucketType.guild)
+async def remove_bad_word(ctx, *, word: str):
+    """
+    Removes a word from the AutoMod profanity filter.
+    Requires 'Administrator' permission.
+    """
+    word = word.lower()
+    if word not in automod_settings["profanity_words"]:
+        await ctx.send(f"'{word}' is not in the profanity filter.")
+        return
+
+    automod_settings["profanity_words"].remove(word)
+    save_automod_settings()
+    await ctx.send(f"Removed '{word}' from the profanity filter.")
+    await log_moderation_action(ctx.guild, "AutoMod Profanity", "Profanity List", ctx.author, f"Removed word: '{word}'")
+
+@bot.command(name='list_bad_words', help='Lists all words in the profanity filter. Usage: {prefix}list_bad_words')
+@commands.has_permissions(kick_members=True) # Or a custom role for moderators
+@commands.cooldown(1, 5, commands.BucketType.guild)
+async def list_bad_words(ctx):
+    """
+    Lists all words currently configured in the AutoMod profanity filter.
+    Requires 'Kick Members' permission.
+    """
+    if not automod_settings["profanity_words"]:
+        await ctx.send("The profanity filter list is currently empty.")
+        return
+
+    words_list = "\n".join(sorted(automod_settings["profanity_words"]))
+    embed = discord.Embed(
+        title="🚫 Profanity Filter Words",
+        description=f"```\n{words_list}\n```",
+        color=discord.Color.dark_red(),
+        timestamp=datetime.datetime.now(datetime.timezone.utc)
+    )
+    embed.set_footer(text=f"Requested by {ctx.author.display_name}")
+    await ctx.send(embed=embed)
+
 
 @bot.command(name='clear', help='Clears a specified number of messages from the channel. Messages older than 14 days cannot be cleared. Usage: {prefix}clear <amount>')
 @commands.has_permissions(manage_messages=True)
